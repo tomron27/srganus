@@ -1,4 +1,5 @@
 from torch.utils.data.dataset import Dataset
+from torch.utils.data import DataLoader
 from PIL import Image
 from torchvision import transforms
 import numpy as np
@@ -47,12 +48,27 @@ class CustomDatasetFromImages(Dataset):
 
 
 if __name__ == "__main__":
+    """"The following does not use a DataLoader."""
     # Call dataset
     ultrasound_dataset_from_images =  \
         CustomDatasetFromImages('ultrasound_images.csv')
+
     for i in range(len(ultrasound_dataset_from_images)):
         sample = ultrasound_dataset_from_images[i]
         print(i, sample.size())
         if i == 3:
             break
+
+if __name__ == "__main__":
+    """The following uses DataLoader, which helps for organising batches."""
+    # Define custom dataset
+    ultrasound_dataset_from_images = \
+        CustomDatasetFromImages('ultrasound_images.csv')
+    # Define data loader
+    mn_dataset_loader = DataLoader(dataset=ultrasound_dataset_from_images,
+                                                    batch_size=10,
+                                                    shuffle=False)
+
+    for images in mn_dataset_loader:
+# # Feed the data to the model
 
