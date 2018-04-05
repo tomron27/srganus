@@ -1,23 +1,19 @@
 #!/usr/bin/env python
 
-import argparse
-import os
-import sys
+# import sys
+# sys.path.append('/data')
 
 import torch
-import torch.optim as optim
-import torch.optim.lr_scheduler as lr_scheduler
 import torch.nn as nn
 from torch.autograd import Variable
 
 import torchvision
-import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 
-# from tensorboard_logger import configure, log_value
+#from . import data_loader
 
 from models import Generator, Discriminator, FeatureExtractor
-from utils import Visualizer
+#from utils import Visualizer
 
 # parser = argparse.ArgumentParser()
 # parser.add_argument('--dataset', type=str, default='cifar100', help='cifar10 | cifar100 | folder')
@@ -43,7 +39,7 @@ from utils import Visualizer
 #     os.makedirs(opt.out)
 # except OSError:
 #     pass
-
+#
 batch_size = 10
 upSampling = 2
 generatorLR = 0.0001
@@ -51,175 +47,106 @@ discriminatorLR = 0.0001
 image_w = 636
 image_h = 422
 dataset = ""
+generatorWeights = 'checkpoints/generator_final.pth'
+discriminatorWeights = 'checkpoints/discriminator_final.pth'
 
 scale = transforms.Compose([transforms.Resize([image_h/upSampling, image_w/upSampling]),
                             transforms.ToTensor()])
-
-dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+#
+# dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
 generator = Generator(16, upSampling)
-if opt.generatorWeights != '':
-    generator.load_state_dict(torch.load(opt.generatorWeights))
+generator.load_state_dict(torch.load(generatorWeights))
 print generator
 
 discriminator = Discriminator()
-if opt.discriminatorWeights != '':
-    discriminator.load_state_dict(torch.load(opt.discriminatorWeights))
+discriminator.load_state_dict(torch.load(discriminatorWeights))
 print discriminator
-
-# For the content loss
-feature_extractor = FeatureExtractor(torchvision.models.vgg19(pretrained=True))
-print feature_extractor
-content_criterion = nn.MSELoss()
-adversarial_criterion = nn.BCELoss()
-
-ones_const = Variable(torch.ones(opt.batchSize, 1))
-
-# if gpu is to be used
-if torch.cuda.is_available():
-    generator.cuda()
-    discriminator.cuda()
-    feature_extractor.cuda()
-    content_criterion.cuda()
-    adversarial_criterion.cuda()
-    ones_const = ones_const.cuda()
-
-optim_generator = optim.Adam(generator.parameters(), lr=opt.generatorLR)
-optim_discriminator = optim.Adam(discriminator.parameters(), lr=opt.discriminatorLR)
-
-configure(
-    'logs/' + opt.dataset + '-' + str(opt.batchSize) + '-' + str(opt.generatorLR) + '-' + str(opt.discriminatorLR),
-    flush_secs=5)
-visualizer = Visualizer(image_size=opt.imageSize * opt.upSampling)
-
-low_res = torch.FloatTensor(opt.batchSize, 3, opt.imageSize, opt.imageSize)
-
-# Pre-train generator using raw MSE loss
-print 'Generator pre-training'
-for epoch in range(2):
-    mean_generator_content_loss = 0.0
-
-    for i, data in enumerate(dataloader):
-        # Generate data
-        high_res_real, _ = data
-
-        # Downsample images to low resolution
-        for j in range(opt.batchSize):
-            low_res[j] = scale(high_res_real[j])
-            high_res_real[j] = normalize(high_res_real[j])
-
-        # Generate real and fake inputs
-        if opt.cuda:
-            high_res_real = Variable(high_res_real.cuda())
-            high_res_fake = generator(Variable(low_res).cuda())
-        else:
-            high_res_real = Variable(high_res_real)
-            high_res_fake = generator(Variable(low_res))
-
-        ######### Train generator #########
-        generator.zero_grad()
-
-        generator_content_loss = content_criterion(high_res_fake, high_res_real)
-        mean_generator_content_loss += generator_content_loss.data[0]
-
-        generator_content_loss.backward()
-        optim_generator.step()
-
-        ######### Status and display #########
-        sys.stdout.write('\r[%d/%d][%d/%d] Generator_MSE_Loss: %.4f' % (
-        epoch, 2, i, len(dataloader), generator_content_loss.data[0]))
-        visualizer.show(low_res, high_res_real.cpu().data, high_res_fake.cpu().data)
-
-    sys.stdout.write('\r[%d/%d][%d/%d] Generator_MSE_Loss: %.4f\n' % (
-    epoch, 2, i, len(dataloader), mean_generator_content_loss / len(dataloader)))
-    log_value('generator_mse_loss', mean_generator_content_loss / len(dataloader), epoch)
-
-# Do checkpointing
-torch.save(generator.state_dict(), '%s/generator_pretrain.pth' % opt.out)
-
-# SRGAN training
-optim_generator = optim.Adam(generator.parameters(), lr=opt.generatorLR * 0.1)
-optim_discriminator = optim.Adam(discriminator.parameters(), lr=opt.discriminatorLR * 0.1)
-
-print 'SRGAN training'
-for epoch in range(opt.nEpochs):
-    mean_generator_content_loss = 0.0
-    mean_generator_adversarial_loss = 0.0
-    mean_generator_total_loss = 0.0
-    mean_discriminator_loss = 0.0
-
-    for i, data in enumerate(dataloader):
-        # Generate data
-        high_res_real, _ = data
-
-        # Downsample images to low resolution
-        for j in range(opt.batchSize):
-            low_res[j] = scale(high_res_real[j])
-            high_res_real[j] = normalize(high_res_real[j])
-
-        # Generate real and fake inputs
-        if opt.cuda:
-            high_res_real = Variable(high_res_real.cuda())
-            high_res_fake = generator(Variable(low_res).cuda())
-            target_real = Variable(torch.rand(opt.batchSize, 1) * 0.5 + 0.7).cuda()
-            target_fake = Variable(torch.rand(opt.batchSize, 1) * 0.3).cuda()
-        else:
-            high_res_real = Variable(high_res_real)
-            high_res_fake = generator(Variable(low_res))
-            target_real = Variable(torch.rand(opt.batchSize, 1) * 0.5 + 0.7)
-            target_fake = Variable(torch.rand(opt.batchSize, 1) * 0.3)
-
-        ######### Train discriminator #########
-        discriminator.zero_grad()
-
-        discriminator_loss = adversarial_criterion(discriminator(high_res_real), target_real) + \
-                             adversarial_criterion(discriminator(Variable(high_res_fake.data)), target_fake)
-        mean_discriminator_loss += discriminator_loss.data[0]
-
-        discriminator_loss.backward()
-        optim_discriminator.step()
-
-        ######### Train generator #########
-        generator.zero_grad()
-
-        real_features = Variable(feature_extractor(high_res_real).data)
-        fake_features = feature_extractor(high_res_fake)
-
-        generator_content_loss = content_criterion(high_res_fake, high_res_real) + 0.006 * content_criterion(
-            fake_features, real_features)
-        mean_generator_content_loss += generator_content_loss.data[0]
-        generator_adversarial_loss = adversarial_criterion(discriminator(high_res_fake), ones_const)
-        mean_generator_adversarial_loss += generator_adversarial_loss.data[0]
-
-        generator_total_loss = generator_content_loss + 1e-3 * generator_adversarial_loss
-        mean_generator_total_loss += generator_total_loss.data[0]
-
-        generator_total_loss.backward()
-        optim_generator.step()
-
-        ######### Status and display #########
-        sys.stdout.write(
-            '\r[%d/%d][%d/%d] Discriminator_Loss: %.4f Generator_Loss (Content/Advers/Total): %.4f/%.4f/%.4f' % (
-            epoch, opt.nEpochs, i, len(dataloader),
-            discriminator_loss.data[0], generator_content_loss.data[0], generator_adversarial_loss.data[0],
-            generator_total_loss.data[0]))
-        visualizer.show(low_res, high_res_real.cpu().data, high_res_fake.cpu().data)
-
-    sys.stdout.write(
-        '\r[%d/%d][%d/%d] Discriminator_Loss: %.4f Generator_Loss (Content/Advers/Total): %.4f/%.4f/%.4f\n' % (
-        epoch, opt.nEpochs, i, len(dataloader),
-        mean_discriminator_loss / len(dataloader), mean_generator_content_loss / len(dataloader),
-        mean_generator_adversarial_loss / len(dataloader), mean_generator_total_loss / len(dataloader)))
-
-    log_value('generator_content_loss', mean_generator_content_loss / len(dataloader), epoch)
-    log_value('generator_adversarial_loss', mean_generator_adversarial_loss / len(dataloader), epoch)
-    log_value('generator_total_loss', mean_generator_total_loss / len(dataloader), epoch)
-    log_value('discriminator_loss', mean_discriminator_loss / len(dataloader), epoch)
-
-    # Do checkpointing
-    torch.save(generator.state_dict(), '%s/generator_final.pth' % opt.out)
-    torch.save(discriminator.state_dict(), '%s/discriminator_final.pth' % opt.out)
-
-# Avoid closing
-while True:
-    pass
+#
+# # For the content loss
+# feature_extractor = FeatureExtractor(torchvision.models.vgg19(pretrained=True))
+# print feature_extractor
+# content_criterion = nn.MSELoss()
+# adversarial_criterion = nn.BCELoss()
+#
+# ones_const = Variable(torch.ones(batch_size, 1))
+#
+# # if gpu is to be used
+# if torch.cuda.is_available():
+#     generator.cuda()
+#     discriminator.cuda()
+#     feature_extractor.cuda()
+#     content_criterion.cuda()
+#     adversarial_criterion.cuda()
+#     ones_const = ones_const.cuda()
+#
+# low_res = torch.FloatTensor(batch_size, 3, image_w, image_h)
+#
+# print 'Test started...'
+# mean_generator_content_loss = 0.0
+# mean_generator_adversarial_loss = 0.0
+# mean_generator_total_loss = 0.0
+# mean_discriminator_loss = 0.0
+#
+# # Set evaluation mode (not training)
+# generator.eval()
+# discriminator.eval()
+#
+# for i, data in enumerate(dataloader):
+#     # Generate data
+#     high_res_real, _ = data
+#
+#     # Downsample images to low resolution
+#     for j in range(opt.batchSize):
+#         low_res[j] = scale(high_res_real[j])
+#         high_res_real[j] = normalize(high_res_real[j])
+#
+#     # Generate real and fake inputs
+#     if opt.cuda:
+#         high_res_real = Variable(high_res_real.cuda())
+#         high_res_fake = generator(Variable(low_res).cuda())
+#     else:
+#         high_res_real = Variable(high_res_real)
+#         high_res_fake = generator(Variable(low_res))
+#
+#     ######### Test discriminator #########
+#
+#     discriminator_loss = adversarial_criterion(discriminator(high_res_real), target_real) + \
+#                          adversarial_criterion(discriminator(Variable(high_res_fake.data)), target_fake)
+#     mean_discriminator_loss += discriminator_loss.data[0]
+#
+#     ######### Test generator #########
+#
+#     real_features = Variable(feature_extractor(high_res_real).data)
+#     fake_features = feature_extractor(high_res_fake)
+#
+#     generator_content_loss = content_criterion(high_res_fake, high_res_real) + 0.006 * content_criterion(fake_features,
+#                                                                                                          real_features)
+#     mean_generator_content_loss += generator_content_loss.data[0]
+#     generator_adversarial_loss = adversarial_criterion(discriminator(high_res_fake), target_real)
+#     mean_generator_adversarial_loss += generator_adversarial_loss.data[0]
+#
+#     generator_total_loss = generator_content_loss + 1e-3 * generator_adversarial_loss
+#     mean_generator_total_loss += generator_total_loss.data[0]
+#
+#     ######### Status and display #########
+#     sys.stdout.write('\r[%d/%d] Discriminator_Loss: %.4f Generator_Loss (Content/Advers/Total): %.4f/%.4f/%.4f' % (
+#     i, len(dataloader),
+#     discriminator_loss.data[0], generator_content_loss.data[0], generator_adversarial_loss.data[0],
+#     generator_total_loss.data[0]))
+#
+#     for j in range(opt.batchSize):
+#         save_image(unnormalize(high_res_real.data[j]), 'output/high_res_real/' + str(i * opt.batchSize + j) + '.png')
+#         save_image(unnormalize(high_res_fake.data[j]), 'output/high_res_fake/' + str(i * opt.batchSize + j) + '.png')
+#         save_image(unnormalize(low_res[j]), 'output/low_res/' + str(i * opt.batchSize + j) + '.png')
+#
+# sys.stdout.write(
+#     '\r[%d/%d] Discriminator_Loss: %.4f Generator_Loss (Content/Advers/Total): %.4f/%.4f/%.4f\n' % (i, len(dataloader),
+#                                                                                                     mean_discriminator_loss / len(
+#                                                                                                         dataloader),
+#                                                                                                     mean_generator_content_loss / len(
+#                                                                                                         dataloader),
+#                                                                                                     mean_generator_adversarial_loss / len(
+#                                                                                                         dataloader),
+#                                                                                                     mean_generator_total_loss / len(
+#                                                                                                         dataloader)))
